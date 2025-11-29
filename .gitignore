@@ -1,2 +1,6 @@
 # macOS
 .DS_Store
+
+# Generated outputs and local libs
+out/
+r_libs/
