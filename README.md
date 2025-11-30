@@ -20,6 +20,7 @@ Synthetic Control is the primary design (CH vs donor centres), with supporting t
 R_LIBS_USER="$(pwd)/r_libs" R_LIBS="$(pwd)/r_libs" Rscript "Swiss Sanctions Scm Did.R"
 ```
 Outputs will go to `fig/` (plots) and `out/` (CSVs).
+Tested on R 4.5.x with packages: tidyverse, fixest, synthdid, did2s, data.table, lubridate (installed to `r_libs` if missing).
 
 ## Data expected
 - BIS LBS quarterly liabilities (non-banks): CH, HK, SG, GB, NL, IE, LU, SA (all present in `data/`); columns: either `TIME_PERIOD`/`OBS_VALUE` or `quarter`/`value` or `date`/`value`.
@@ -32,7 +33,7 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs).
 ## Key analyses in the script
 1) **Levels/index plot (CH/HK/SG)**  
    - `fig/fig1_levels_index_CH_HK_SG.png`  
-   - Vertical line at 2022Q2.
+  - Vertical line at 2022Q2. We treat 2022Q2 as the first fully “treated” quarter (sanctions announced Feb 28, 2022, but liabilities react with a one-quarter lag).
 
 2) **Triad shares (CH vs HK+SG)**  
    - Descriptive share plot: `fig/fig_triad_share_CH_vs_HKSG.png`  
