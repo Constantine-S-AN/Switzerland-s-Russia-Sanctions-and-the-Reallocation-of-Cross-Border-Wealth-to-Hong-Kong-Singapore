@@ -7,9 +7,9 @@ Synthetic Control is the primary design (CH vs donor centres), with supporting t
 - `data/` — cleaned BIS quarterly liabilities:
   - `bis_ch_quarterly.csv`, `bis_hk_quarterly.csv`, `bis_sg_quarterly.csv`
   - `bis_uk_quarterly.csv`, `bis_nl_quarterly.csv`, `bis_ie_quarterly.csv`
-  - `bis_lu_quarterly.csv` (Luxembourg donor, already present)
-  - (Optional) Saudi Arabia: raw file `Raw_data/Saudi_Arabia_cross_lia.csv` exists; place a copy into `data/` as `Saudi_Arabia_cross_lia.csv` to enable the Saudi ES.
-- `Raw_data/` — raw downloads (BIS, FX, etc.); FX controls read from `Raw_data/Exchange rate/*.csv`. Raw BIS for Luxembourg (`Raw_data/Luxembourg——liability.csv`) and Saudi (`Raw_data/Saudi_Arabia_cross_lia.csv`) are here if you need to re-clean or re-export.
+  - `bis_lu_quarterly.csv` (Luxembourg donor, present)
+  - `Saudi_Arabia_cross_lia.csv` (Saudi series, present and enabled for the Saudi ES)
+- `Raw_data/` — raw downloads (BIS, FX, etc.); FX controls read from `Raw_data/Exchange rate/*.csv`. Raw BIS for Luxembourg (`Raw_data/Luxembourg——liability.csv`) and Saudi (`Raw_data/Saudi_Arabia_cross_lia.csv`) are included if you need to re-clean or re-export.
 - `fig/` — generated figures (PNG).
 - `out/` — generated tables/diagnostics (CSV).
 - `r_libs/` — local R library (auto-created).
@@ -23,8 +23,7 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs). If `Luxembourg——liabili
 
 ## Data expected
 - BIS LBS quarterly liabilities (non-banks):
-  - CH, HK, SG, GB, NL, IE, LU (present in `data/`)
-  - SA optional: raw in `Raw_data/Saudi_Arabia_cross_lia.csv`; copy to `data/` to enable
+  - CH, HK, SG, GB, NL, IE, LU, SA (present in `data/`)
   - Columns: either `TIME_PERIOD`/`OBS_VALUE` or `quarter`/`value` or `date`/`value`.
 - FX controls (monthly → quarterly averages):
   - `Raw_data/Exchange rate/Swiss_Francs_to_One_USd.csv`
@@ -59,8 +58,8 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs). If `Luxembourg——liabili
    - Share ES: `fig/fig_event_HKSG_share.png`  
    - Note: coefficients are noisy; CIs often include zero.
 
-6) **Saudi vs donors (optional)**  
-   - Skipped unless `data/Saudi_Arabia_cross_lia.csv` is present.
+6) **Saudi vs donors**  
+   - Saudi ES runs when `data/Saudi_Arabia_cross_lia.csv` is present (included in the repo).
 
 ## Generated outputs
 ### Figures (PNG, in `fig/`)
@@ -74,7 +73,7 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs). If `Luxembourg——liabili
 - `fig_es_triad_CH_vs_HKSG.png`
 - `fig_es_triad_CH_vs_HKSG_CI.png` (Sun–Abraham ES with 95% CIs)
 - `fig_event_HKSG_share.png`
-- (SA plot only if SA data present)
+- `fig_event_SA_vs_donors.png`
 
 ### Tables/diagnostics (CSV, in `out/`)
 - `panel_quarterly_CH_HK_SG_and_donors.csv`
@@ -89,9 +88,9 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs). If `Luxembourg——liabili
 - Triad DiD ATT (CH vs HK+SG share): ~ -2.5 p.p. (treat_CH:post) on 2018Q1+ sample.
 - Triad ES (Sun–Abraham): event time 0 = 2022Q2; post coefficients should be negative if CH loses triad share.
 - HK+SG vs other donor centres: imprecise; treat as exploratory.
+- Saudi vs donors: runs when the Saudi file is present (included); see `fig_event_SA_vs_donors.png`.
 
 ## Troubleshooting
-- Missing LU/SA files: SA ES skipped, LU not used as donor; add `data/Luxembourg——liability.csv` and `data/Saudi_Arabia_cross_lia.csv` to enable.
 - Blank triad CI plot: ensure `fig/` exists (script creates it), and that `tidyverse`, `fixest`, `broom` load; rerun the script.
 - PSD VCOV warnings from `fixest` are benign; ggplot linewidth deprecation is harmless.
 
