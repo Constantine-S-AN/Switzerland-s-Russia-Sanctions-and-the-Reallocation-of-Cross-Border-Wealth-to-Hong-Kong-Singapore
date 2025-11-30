@@ -7,8 +7,9 @@ Synthetic Control is the primary design (CH vs donor centres), with supporting t
 - `data/` — cleaned BIS quarterly liabilities:
   - `bis_ch_quarterly.csv`, `bis_hk_quarterly.csv`, `bis_sg_quarterly.csv`
   - `bis_uk_quarterly.csv`, `bis_nl_quarterly.csv`, `bis_ie_quarterly.csv`
-  - Expected but currently missing: `Luxembourg——liability.csv`, `Saudi_Arabia_cross_lia.csv`
-- `Raw_data/` — raw downloads (BIS, FX, etc.); FX controls read from `Raw_data/Exchange rate/*.csv`.
+  - `bis_lu_quarterly.csv` (Luxembourg donor, already present)
+  - (Optional) Saudi Arabia: raw file `Raw_data/Saudi_Arabia_cross_lia.csv` exists; place a copy into `data/` as `Saudi_Arabia_cross_lia.csv` to enable the Saudi ES.
+- `Raw_data/` — raw downloads (BIS, FX, etc.); FX controls read from `Raw_data/Exchange rate/*.csv`. Raw BIS for Luxembourg (`Raw_data/Luxembourg——liability.csv`) and Saudi (`Raw_data/Saudi_Arabia_cross_lia.csv`) are here if you need to re-clean or re-export.
 - `fig/` — generated figures (PNG).
 - `out/` — generated tables/diagnostics (CSV).
 - `r_libs/` — local R library (auto-created).
@@ -22,8 +23,8 @@ Outputs will go to `fig/` (plots) and `out/` (CSVs). If `Luxembourg——liabili
 
 ## Data expected
 - BIS LBS quarterly liabilities (non-banks):
-  - CH, HK, SG, GB, NL, IE (present)
-  - LU, SA (optional; add to `data/` to enable)
+  - CH, HK, SG, GB, NL, IE, LU (present in `data/`)
+  - SA optional: raw in `Raw_data/Saudi_Arabia_cross_lia.csv`; copy to `data/` to enable
   - Columns: either `TIME_PERIOD`/`OBS_VALUE` or `quarter`/`value` or `date`/`value`.
 - FX controls (monthly → quarterly averages):
   - `Raw_data/Exchange rate/Swiss_Francs_to_One_USd.csv`
