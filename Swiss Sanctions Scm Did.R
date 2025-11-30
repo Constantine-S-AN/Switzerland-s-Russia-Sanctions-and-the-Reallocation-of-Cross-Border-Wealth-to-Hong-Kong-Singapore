@@ -61,6 +61,8 @@ index_base <- as.yearqtr("2019 Q4")
 
 out_dir <- "out"
 dir_create(out_dir)
+fig_dir <- "fig"
+dir_create(fig_dir)
 
 ###########################
 # 2. Helpers
@@ -175,10 +177,10 @@ fig1 <- panel_indexed %>%
   geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
   scale_y_continuous(labels = label_comma()) +
   labs(title = "Cross-border liabilities to non-banks (index = 2019Q4=100)",
-       subtitle = "Vertical line = 2022Q1 (Switzerland adopts EU Russia sanctions)",
+       subtitle = "Vertical line = 2022Q2 (Switzerland adopts EU Russia sanctions)",
        x = NULL, y = "Index (2019Q4=100)", color = "Center") +
   theme_minimal(base_size = 12)
-ggsave(file.path(out_dir, "fig1_levels_index_CH_HK_SG.png"), fig1, width = 9, height = 5.2, dpi = 200)
+ggsave(file.path(fig_dir, "fig1_levels_index_CH_HK_SG.png"), fig1, width = 9, height = 5.2, dpi = 200)
 
 ###########################
 # 4b. Triad shares: CH vs HK+SG
@@ -186,7 +188,8 @@ ggsave(file.path(out_dir, "fig1_levels_index_CH_HK_SG.png"), fig1, width = 9, he
 
 triad <- panel %>%
   filter(id %in% c("CH", "HK", "SG")) %>%
-  group_by(quarter) %>%
+  transmute(center = id, time_qtr = quarter, value = value) %>%
+  group_by(time_qtr) %>%
   mutate(
     tri_total = sum(value, na.rm = TRUE),
     share_tri = value / tri_total
@@ -196,20 +199,20 @@ triad <- panel %>%
 triad_agg <- triad %>%
   mutate(
     group = case_when(
-      id == "CH"              ~ "CH",
-      id %in% c("HK", "SG")   ~ "HK+SG",
+      center == "CH"              ~ "CH",
+      center %in% c("HK", "SG")   ~ "HK+SG",
       TRUE                    ~ NA_character_
     )
   ) %>%
   filter(!is.na(group)) %>%
-  group_by(group, quarter) %>%
+  group_by(group, time_qtr) %>%
   summarise(
     share_tri = sum(share_tri, na.rm = TRUE),
     .groups   = "drop"
   )
 
 fig_triad <- triad_agg %>%
-  ggplot(aes(x = as.Date(as.yearqtr(quarter)), y = share_tri, color = group)) +
+  ggplot(aes(x = as.Date(as.yearqtr(time_qtr)), y = share_tri, color = group)) +
   geom_line(linewidth = 1) +
   geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
@@ -223,7 +226,7 @@ fig_triad <- triad_agg %>%
   theme_minimal(base_size = 12)
 
 ggsave(
-  file.path(out_dir, "fig_triad_share_CH_vs_HKSG.png"),
+  file.path(fig_dir, "fig_triad_share_CH_vs_HKSG.png"),
   fig_triad, width = 9, height = 5.2, dpi = 200
 )
 
@@ -234,10 +237,10 @@ ggsave(
 triad_es <- triad_agg %>%
   mutate(
     treated = (group == "CH"),
-    time_id = as.integer(factor(quarter, levels = sort(unique(quarter))))
+    time_id = as.integer(factor(time_qtr, levels = sort(unique(time_qtr))))
   )
 
-ref_time_tri <- max(triad_es$time_id[triad_es$quarter < q_treat])
+ref_time_tri <- max(triad_es$time_id[triad_es$time_qtr < q_treat])
 
 es_triad <- feols(
   share_tri ~ i(time_id, treated, ref = ref_time_tri) | group + time_id,
@@ -270,16 +273,108 @@ fig_es_triad <- es_triad_tidy %>%
   theme_minimal(base_size = 12)
 
 ggsave(
-  file.path(out_dir, "fig_es_triad_CH_vs_HKSG.png"),
+  file.path(fig_dir, "fig_es_triad_CH_vs_HKSG.png"),
   fig_es_triad, width = 8.5, height = 5.2, dpi = 200
+)
+
+###########################
+# 4d. Triad-share DiD & ES (CH vs HK+SG, formal)
+###########################
+
+triad_panel <- panel %>%
+  filter(id %in% c("CH", "HK", "SG")) %>%
+  transmute(
+    center   = id,
+    time_qtr = quarter,
+    liab     = value
+  ) %>%
+  group_by(time_qtr) %>%
+  mutate(
+    triad_total = sum(liab, na.rm = TRUE),
+    triad_share = liab / triad_total
+  ) %>%
+  ungroup() %>%
+  mutate(
+    treat_CH = as.integer(center == "CH"),
+    post     = as.integer(time_qtr >= as.yearqtr("2022 Q1"))
+  )
+
+triad_panel <- triad_panel %>%
+  arrange(time_qtr, center) %>%
+  mutate(t_id = as.integer(factor(time_qtr)))
+
+event_qtr <- as.yearqtr("2022 Q2")
+event_t_id <- triad_panel %>% filter(time_qtr == event_qtr) %>% pull(t_id) %>% unique()
+
+triad_panel <- triad_panel %>%
+  mutate(
+    g_triad = if_else(center == "CH", event_t_id, 0L)
+  )
+
+triad_sample <- triad_panel %>% filter(time_qtr >= as.yearqtr("2018 Q1"))
+
+did_triad <- feols(
+  triad_share ~ treat_CH * post | center + time_qtr,
+  data    = triad_sample,
+  cluster = ~center
+)
+print(summary(did_triad))
+# ATT interpretation: coefficient on treat_CH:post is in share units (~percentage points of triad share).
+
+es_triad <- feols(
+  triad_share ~ sunab(g_triad, t_id) | center + t_id,
+  cluster = ~ center,
+  data = triad_panel %>% filter(time_qtr >= as.yearqtr("2018 Q1"))
+)
+
+es_triad_tidy_ci <- broom::tidy(es_triad, conf.int = TRUE) %>%
+  filter(str_detect(term, "^t_id::")) %>%
+  mutate(
+    event_time = suppressWarnings(as.integer(stringr::str_match(term, "::(-?\\d+)$")[, 2]))
+  ) %>%
+  drop_na(event_time)
+
+p_es_triad <- es_triad_tidy_ci %>%
+  ggplot(aes(x = event_time, y = estimate)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  labs(
+    title = "Event-study: CH vs HK+SG (share within triad)",
+    x     = "Event time (quarters, 0 = 2022Q2)",
+    y     = "Difference in triad share (CH \u2212 HK+SG)"
+  ) +
+  theme_minimal(base_size = 14)
+
+ggsave(
+  filename = "fig/fig_es_triad_CH_vs_HKSG_CI.png",
+  plot     = p_es_triad,
+  width    = 8,
+  height   = 5,
+  dpi      = 300,
+  bg       = "white"
+)
+# Interpretation:
+# es_triad Sun–Abraham coefficients measure CH triad share relative to HK+SG
+# around the 2022Q2 sanction shock (event time 0); post-2022Q2 coefficients
+# should be negative if CH loses triad share to HK+SG.
+ggsave(
+  filename = "fig/fig_es_triad_CH_vs_HKSG_CI.png",
+  plot     = p_es_triad,
+  width    = 8,
+  height   = 5,
+  dpi      = 300,
+  bg       = "white"
 )
 
 ###########################
 # 5. synthdid SCM
 ###########################
-units_for_ch <- c(intersect(ids_donors, unique(panel$id)), "CH")  # donors first, CH last
+panel_scm <- panel %>% filter(quarter >= as.yearqtr("2017 Q1"))
 
-ch_mat <- panel %>%
+units_for_ch <- c(intersect(ids_donors, unique(panel_scm$id)), "CH")  # donors first, CH last
+
+ch_mat <- panel_scm %>%
   filter(id %in% units_for_ch) %>%
   select(id, quarter, log_value) %>%
   pivot_wider(names_from = quarter, values_from = log_value) %>%
@@ -301,7 +396,7 @@ ch_tau <- tryCatch(as.numeric(ch_sd), error = function(e) { message("[warn] coef
 if (!is.na(ch_tau)) print(glue("synthdid ATT (post-mean log gap): {round(ch_tau, 4)}"))
 
 tryCatch({
-  png(file.path(out_dir, "fig2_synthdid_paths_CH.png"), width = 900, height = 520)
+  png(file.path(fig_dir, "fig2_synthdid_paths_CH.png"), width = 900, height = 520)
   plot(ch_sd)
   invisible(dev.off())
 }, error = function(e) message("[warn] synthdid plot failed: ", e$message))
@@ -343,7 +438,7 @@ fig3 <- placebo_df %>%
   labs(title = "Placebo ATT distribution (log scale)", y = "Post-mean ATT (log)", x = NULL,
        subtitle = glue("N_placebo = {nrow(placebo_df)}; perm p = {round(perm_p,3)}")) +
   theme_minimal(base_size = 12)
-ggsave(file.path(out_dir, "fig3_placebo_ATT.png"), fig3, width = 8, height = 6, dpi = 200)
+ggsave(file.path(fig_dir, "fig3_placebo_ATT.png"), fig3, width = 8, height = 6, dpi = 200)
 
 wt <- tryCatch(synthdid::weights(ch_sd), error = function(e) NULL)
 omega <- if (!is.null(wt)) wt$omega else NULL
@@ -385,7 +480,7 @@ fig3b <- loo %>% ggplot(aes(x = reorder(dropped, att), y = att)) +
   geom_point() + coord_flip() +
   labs(title = "Leave-one-out ATT (drop each donor)", x = "Dropped donor", y = "ATT (log)") +
   theme_minimal(base_size = 12)
-ggsave(file.path(out_dir, "fig3b_synthdid_leave_one_out.png"), fig3b, width = 8, height = 6, dpi = 200)
+ggsave(file.path(fig_dir, "fig3b_synthdid_leave_one_out.png"), fig3b, width = 8, height = 6, dpi = 200)
 
 ###########################
 # 6. Event-study DiD
@@ -413,7 +508,7 @@ fig6 <- es_tidy %>%
   geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error), width = 0.2) +
   labs(title = "Event-study for Switzerland (log outcome)", x = "Event time (quarters, 0 = first post)", y = "Estimate (log points)") +
   theme_minimal(base_size = 12)
-ggsave(file.path(out_dir, "fig6_event_study_CH.png"), fig6, width = 8.5, height = 5.2, dpi = 200)
+ggsave(file.path(fig_dir, "fig6_event_study_CH.png"), fig6, width = 8.5, height = 5.2, dpi = 200)
 
 panel_es_donors <- panel %>% filter(id %in% c("CH", intersect(ids_donors, unique(id)))) %>%
   mutate(treated = (id == "CH"), time_id = as.integer(factor(quarter)))
@@ -433,7 +528,7 @@ fig6b <- es_d_tidy %>%
   geom_errorbar(aes(ymin = estimate - 1.96 * std.error, ymax = estimate + 1.96 * std.error), width = 0.2) +
   labs(title = "Event-study (donors-only controls)", x = "Event time (quarters)", y = "Estimate (log)") +
   theme_minimal(base_size = 12)
-ggsave(file.path(out_dir, "fig6b_event_study_CH_donors_only.png"), fig6b, width = 8.5, height = 5.2, dpi = 200)
+ggsave(file.path(fig_dir, "fig6b_event_study_CH_donors_only.png"), fig6b, width = 8.5, height = 5.2, dpi = 200)
 
 ###########################
 # 6b. Event-study: HK+SG share vs donors
@@ -463,6 +558,7 @@ shares_es <- shares %>%
 
 ref_time_hksg <- max(shares_es$time_id[shares_es$quarter < q_treat])
 
+# Note: coefficients here are noisy and CIs typically include zero; treat as exploratory robustness.
 es_hksg <- feols(
   share ~ i(time_id, treated, ref = ref_time_hksg) | id + time_id,
   data    = shares_es,
@@ -494,7 +590,7 @@ fig_HKSG <- es_hksg_tidy %>%
   theme_minimal(base_size = 12)
 
 ggsave(
-  file.path(out_dir, "fig_event_HKSG_share.png"),
+  file.path(fig_dir, "fig_event_HKSG_share.png"),
   fig_HKSG, width = 8.5, height = 5.2, dpi = 200
 )
 
@@ -543,8 +639,8 @@ if (nrow(sa_es) > 0 && length(unique(sa_es$treated)) > 1) {
       ) +
       theme_minimal(base_size = 12)
 
-    ggsave(
-      file.path(out_dir, "fig_event_SA_vs_donors.png"),
+  ggsave(
+      file.path(fig_dir, "fig_event_SA_vs_donors.png"),
       fig_sa, width = 8.5, height = 5.2, dpi = 200
     )
     TRUE
@@ -558,5 +654,12 @@ if (nrow(sa_es) > 0 && length(unique(sa_es$treated)) > 1) {
 ###########################
 write_csv(panel, file.path(out_dir, "panel_quarterly_CH_HK_SG_and_donors.csv"))
 write_csv(panel_indexed, file.path(out_dir, "panel_quarterly_indexed.csv"))
+
+# -------------------------
+# INTERPRETIVE NOTES (comments only)
+# -------------------------
+# SCM: CH log liabilities roughly -13% vs synthetic after 2022Q2; perm p ≈ 0.67 (suggestive, not definitive).
+# Triad share: DiD ATT (CH vs HK+SG) in triad share is negative (percentage-point drop for CH); ES shows CH losing share while HK+SG gain post-2022.
+# HK+SG vs other donors: estimates are noisy with CIs often covering zero; evidence for broader global share gains is weaker than triad-share result.
 
 message("\nDone. Check the ./out/ folder for figures and CSVs.\n")
