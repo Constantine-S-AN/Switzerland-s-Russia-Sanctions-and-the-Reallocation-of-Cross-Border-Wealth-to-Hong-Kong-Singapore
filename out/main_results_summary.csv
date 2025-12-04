@@ -1,0 +1,6 @@
+model,estimate,std_error,p_value,t_value,sig,note
+Triad share DiD (CH vs HK+SG),-0.03394793377018461,0.018063239443159376,0.20095374101365146,-1.8793934430759502,,"CH share vs HK+SG (triad, pct-pt)"
+"Log liabilities DiD (CH vs auto donors, +GDP)",-0.3326531554795505,1.0000000000000002e-6,1.913764417619659e-6,-332653.1554795504,***,"CH vs auto donors, log liabilities, +GDP"
+"Log liabilities DiD (CH vs fixed donors, +GDP)",-0.3326531554795505,1.0000000000000002e-6,1.913764417619659e-6,-332653.1554795504,***,"CH vs fixed donors, log liabilities, +GDP"
+SCM ATT (log gap),-0.07007148108260296,NA,NA,NA,,SCM post-mean log gap
+SCM perm p-value,0.5,NA,0.5,NA,,Permutation p-value (SCM)

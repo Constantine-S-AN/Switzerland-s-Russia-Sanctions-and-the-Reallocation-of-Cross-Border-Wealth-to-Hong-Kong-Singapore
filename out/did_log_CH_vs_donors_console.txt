@@ -1,0 +1,11 @@
+OLS estimation, Dep. Var.: log_value
+Observations: 38
+Fixed-effects: group: 2,  quarter: 19
+Standard-errors: Clustered (group) 
+                Estimate Std. Error   t value   Pr(>|t|)    
+group::CH:post -0.332653      1e-06 -332653.2 1.9138e-06 ***
+gdp_idx        -0.073820      1e-06  -73819.9 8.6240e-06 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.426345     Adj. R2: 0.21189 
+                 Within R2: 0.299944

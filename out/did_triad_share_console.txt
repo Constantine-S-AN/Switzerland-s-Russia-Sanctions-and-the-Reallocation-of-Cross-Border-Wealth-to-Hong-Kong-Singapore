@@ -1,0 +1,10 @@
+OLS estimation, Dep. Var.: triad_share
+Observations: 45
+Fixed-effects: center: 3,  time_qtr: 15
+Standard-errors: Clustered (center) 
+               Estimate Std. Error  t value Pr(>|t|) 
+post:treat_CH -0.033948   0.018063 -1.87939  0.20095 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.011789     Adj. R2: 0.966109
+                 Within R2: 0.306625

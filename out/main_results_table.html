@@ -1,0 +1,23 @@
+<html><head><style>
+body { font-family: Arial, sans-serif; padding: 24px; }
+h2 { margin-bottom: 6px; }
+table { border-collapse: collapse; width: 90%; font-size: 16px; }
+th, td { border: 1px solid #333; padding: 8px 10px; }
+th { background: #f2f2f2; text-align: left; }
+tr:nth-child(even) { background: #fafafa; }
+.neg { color: #b00020; font-weight: 600; }
+.pos { color: #004d1a; font-weight: 600; }
+.note { color: #555; font-size: 12px; }
+</style></head><body>
+<h2>Main Results (DiD + SCM)</h2>
+<table>
+<thead><tr><th>Model</th><th>Estimate</th><th>Std. Error</th><th>t value</th><th>p-value</th></tr></thead>
+<tbody>
+<tr><td>Triad share DiD (CH vs HK+SG)<br/><span class='note'>CH share vs HK+SG (triad, pct-pt)</span></td><td class='neg'>-0.034</td><td>0.018</td><td>-1.879</td><td>0.201 </td></tr>
+<tr><td>Log liabilities DiD (CH vs auto donors, +GDP)<br/><span class='note'>CH vs auto donors, log liabilities, +GDP</span></td><td class='neg'>-0.333</td><td>0.000</td><td>-332653.200</td><td>0.000 ***</td></tr>
+<tr><td>Log liabilities DiD (CH vs fixed donors, +GDP)<br/><span class='note'>CH vs fixed donors, log liabilities, +GDP</span></td><td class='neg'>-0.333</td><td>0.000</td><td>-332653.200</td><td>0.000 ***</td></tr>
+<tr><td>SCM ATT (log gap)<br/><span class='note'>SCM post-mean log gap</span></td><td class='neg'>-0.070</td><td>--</td><td>--</td><td>-- </td></tr>
+<tr><td>SCM perm p-value<br/><span class='note'>Permutation p-value (SCM)</span></td><td class='pos'>0.500</td><td>--</td><td>--</td><td>0.500 </td></tr>
+</tbody></table>
+<p style='margin-top:8px; font-size:12px;'>Sig. codes: *** <0.001, ** <0.01, * <0.05, . <0.1</p>
+</body></html>
