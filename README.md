@@ -1,8 +1,4 @@
-* explicitly documents **`Dataset/`**, **`bis_CH.csv`**, and **`Rplots.pdf`**
-* clarifies what **`fig_py/`** and **`out_py/`** are for
-* slightly reorganizes things so someone new can understand the project end-to-end
 
-````markdown
 # Switzerland Sanctions → Wealth Reallocation (CH ↓ vs HK/SG ↑)
 
 This repo asks whether Switzerland’s adoption of EU Russia sanctions around **2022Q2** led to a *relative* decline in cross-border bank liabilities booked in Switzerland, with corresponding gains in **Hong Kong** and **Singapore**, after accounting for global conditions.
