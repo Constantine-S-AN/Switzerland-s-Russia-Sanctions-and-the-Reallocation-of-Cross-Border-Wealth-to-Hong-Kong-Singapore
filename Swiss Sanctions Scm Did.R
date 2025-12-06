@@ -12,7 +12,7 @@ options(repos = c(CRAN = "https://cloud.r-project.org"))
 needed <- c(
   "tidyverse", "lubridate", "zoo", "scales",
   "readr", "glue", "fs",
-  "Synth", "synthdid", "fixest", "broom"
+  "Synth", "synthdid", "fixest", "broom", "fwildclusterboot"
 )
 for (pkg in needed) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -52,11 +52,12 @@ paths <- list(
   EXSIUS = "Raw_data/Exchange rate/Singapore_Dollars_to_One_USDollar.csv",
   EXLUUS = "Raw_data/Luxembourg_usd.csv",
   EXSAUS = "Raw_data/Saudi_usd.csv",
-  GDP_CH = "Raw_data/CLVMNACSAB1GQCH.csv"
+  GDP_CH = "Raw_data/CLVMNACSAB1GQCH.csv",
+  VIX    = "Raw_data/VIX.csv"
 )
 
 ids_main   <- c("CH", "HK", "SG", "SA")         # include Saudi as a main unit we track
-ids_donors <- c("GB", "NL", "IE", "LU")        # donors for Switzerland; LU added
+ids_donors <- c("GB", "NL", "IE")        # donors for Switzerland; LU dropped
 
 q_start <- as.yearqtr("2015 Q1")
 q_end   <- as.yearqtr("2025 Q2")
@@ -175,6 +176,64 @@ read_gdp_ch <- function(path) {
     ) %>%
     filter(!is.na(quarter), !is.na(gdp_ch))
 }
+read_vix <- function(path) {
+  if (!file_exists(path)) return(NULL)
+  df <- suppressMessages(read_csv(path, show_col_types = FALSE))
+  date_col <- intersect(names(df), c("DATE", "Date", "date", "observation_date"))[1]
+  val_col  <- setdiff(names(df), c("DATE", "Date", "date", "observation_date"))[1]
+  if (is.na(date_col) || is.na(val_col)) return(NULL)
+  df %>%
+    transmute(
+      quarter = as.yearqtr(as.Date(.data[[date_col]])),
+      vix = as.numeric(.data[[val_col]])
+    ) %>%
+    group_by(quarter) %>%
+    summarise(vix = mean(vix, na.rm = TRUE), .groups = "drop")
+}
+
+# Annual GDP growth files (per country) → quarterly step series
+read_gdp_growth_dir <- function(dir_path) {
+  if (!dir_exists(dir_path)) return(NULL)
+  files <- dir_ls(dir_path, glob = "*.csv")
+  if (length(files) == 0) return(NULL)
+
+  recode_id <- function(fname) {
+    base <- tools::file_path_sans_ext(path_file(fname))
+    base <- sub("^GDP_", "", base)
+    key  <- toupper(gsub("_", "", base))
+    recode(key,
+           SWITZERLAND = "CH",
+           HONGKONGSARCHINA = "HK",
+           SINGAPORE = "SG",
+           UNITEDKINGDOM = "GB",
+           NETHERLANDS = "NL",
+           IRELAND = "IE",
+           LUXEMBOURG = "LU",
+           SAUDIARABIA = "SA",
+           .default = NA_character_)
+  }
+
+  out <- purrr::map_dfr(files, function(f) {
+    id <- recode_id(f)
+    if (is.na(id)) return(NULL)
+    df <- suppressMessages(read_csv(f, show_col_types = FALSE))
+    if (!all(c("year", "GDP_growth") %in% names(df))) return(NULL)
+    df %>%
+      transmute(year = as.integer(year), growth = as.numeric(GDP_growth)) %>%
+      drop_na(year, growth) %>%
+      rowwise() %>%
+      mutate(tmp = list(tibble(
+        id = id,
+        quarter = as.yearqtr(paste0(year, " Q", 1:4)),
+        gdp_growth = growth
+      ))) %>%
+      ungroup() %>%
+      select(tmp) %>%
+      tidyr::unnest(tmp)
+  })
+  if (nrow(out) == 0) return(NULL)
+  out
+}
 
 # Pretrend joint test (Wald) utility
 pretrend_test_one <- function(es_model, tidy_df) {
@@ -186,6 +245,34 @@ pretrend_test_one <- function(es_model, tidy_df) {
   as.numeric(w$p.value)
 }
 safe_p <- function(x) if (length(x) == 0) NA_real_ else x
+
+# Wild cluster bootstrap helper (Rademacher), safe wrapper
+wild_boot <- function(model, param, cluster, B = 999, seed = 123) {
+  if (!requireNamespace("fwildclusterboot", quietly = TRUE)) {
+    message("[info] fwildclusterboot not available; skipping wild bootstrap for ", param)
+    return(NULL)
+  }
+  set.seed(seed)
+  res <- tryCatch(
+    fwildclusterboot::boottest(
+      model,
+      param = param,
+      clustid = cluster,
+      B = B,
+      type = "rademacher",
+      conf_int = TRUE
+    ),
+    error = function(e) NULL
+  )
+  if (is.null(res)) return(NULL)
+  tibble(
+    term   = param,
+    boot_p = res$p_val,
+    ci_low = res$ci_low,
+    ci_high = res$ci_high,
+    B = B
+  )
+}
 
 # Convert a raw BIS download (with header preamble) into a clean two-column CSV in ./data
 convert_bis_raw <- function(raw_file, out_file) {
@@ -373,6 +460,45 @@ if (!is.null(gdp_ch) && nrow(gdp_ch) > 0) {
       )
     write_csv(gdp_stats, file.path(out_dir, "gdp_liab_summary_CH.csv"))
     gdp_idx_tbl <- gdp_liab %>% select(quarter, gdp_idx)
+  }
+}
+vix_q <- read_vix(paths$VIX)
+gdp_growth_q <- read_gdp_growth_dir("Raw_data/GDP growth-selected")
+if (!is.null(gdp_growth_q)) {
+  gdp_growth_q <- gdp_growth_q %>%
+    filter(quarter >= q_start, quarter <= q_end)
+  write_csv(gdp_growth_q, file.path(out_dir, "gdp_growth_quarterly_all.csv"))
+
+  # Plot GDP growth (quarterly step) for available centers
+  gdp_ids <- intersect(unique(gdp_growth_q$id), unique(panel$id))
+  if (length(gdp_ids) > 0) {
+    gdp_growth_plot <- gdp_growth_q %>%
+      filter(id %in% gdp_ids) %>%
+      group_by(id) %>%
+      arrange(quarter, .by_group = TRUE) %>%
+      mutate(growth_ma4 = zoo::rollmean(gdp_growth, 4, fill = NA, align = "right")) %>%
+      ungroup()
+
+    fig_gdp_growth <- gdp_growth_plot %>%
+      ggplot(aes(x = as.Date(quarter), color = id)) +
+      geom_line(aes(y = growth_ma4), linewidth = 1) +
+      geom_point(aes(y = growth_ma4), size = 1.5, alpha = 0.7) +
+      geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
+      labs(
+        title = "GDP growth (4-quarter moving average)",
+        subtitle = "Dashed = 2022Q2 sanctions; smoothed within each country",
+        x = NULL, y = "GDP growth (%)", color = "Center"
+      ) +
+      theme_minimal(base_size = 12) +
+      theme(legend.position = "bottom")
+
+    ggsave(file.path(fig_dir, "fig_gdp_growth_quarterly.png"), fig_gdp_growth, width = 9, height = 5.2, dpi = 200)
+
+    gdp_growth_prepost <- gdp_growth_q %>%
+      mutate(post = quarter >= q_treat) %>%
+      group_by(id, post) %>%
+      summarise(mean_growth = mean(gdp_growth, na.rm = TRUE), .groups = "drop")
+    write_csv(gdp_growth_prepost, file.path(out_dir, "gdp_growth_prepost_by_id.csv"))
   }
 }
 
@@ -595,11 +721,18 @@ did_triad <- feols(
 )
 did_triad_tidy <- broom::tidy(did_triad) %>%
   filter(term %in% c("post:treat_CH"))
+did_triad_boot <- wild_boot(did_triad, "post:treat_CH", cluster = "center")
 
 write_csv(
   did_triad_tidy,
   file.path(out_dir, "did_triad_share_results.csv")
 )
+if (!is.null(did_triad_boot)) {
+  write_csv(
+    did_triad_boot %>% mutate(model = "Triad share CH vs HK+SG"),
+    file.path(out_dir, "did_triad_share_wildboot.csv")
+  )
+}
 writeLines(
   capture.output(print(summary(did_triad))),
   file.path(out_dir, "did_triad_share_console.txt")
@@ -614,6 +747,7 @@ did_ch_donors_data <- panel %>%
     post    = as.integer(quarter >= q_treat)
   ) %>%
   { if (!is.null(gdp_idx_tbl)) left_join(., gdp_idx_tbl, by = "quarter") else mutate(., gdp_idx = NA_real_) } %>%
+  { if (!is.null(gdp_growth_q)) left_join(., gdp_growth_q, by = c("id", "quarter")) else mutate(., gdp_growth = NA_real_) } %>%
   mutate(gdp_idx = if_else(id == "CH", gdp_idx, 0))  # donors get 0 baseline so CH variation remains
 
 did_ch_donors_group <- did_ch_donors_data %>%
@@ -622,18 +756,20 @@ did_ch_donors_group <- did_ch_donors_data %>%
   summarise(
     log_value = mean(log_value, na.rm = TRUE),
     gdp_idx   = mean(gdp_idx, na.rm = TRUE),
+    gdp_growth = mean(gdp_growth, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(group = factor(group, levels = c("Donor", "CH")))
 
 did_ch_donors <- feols(
-  log_value ~ i(group, post, ref = "Donor") + gdp_idx | group + quarter,
+  log_value ~ i(group, post, ref = "Donor") + gdp_idx + gdp_growth | group + quarter,
   cluster = ~ group,
   data = did_ch_donors_group
 )
 
 did_ch_donors_tidy <- broom::tidy(did_ch_donors) %>%
   filter(term == "group::CH:post")
+did_ch_donors_boot <- wild_boot(did_ch_donors, "group::CH:post", cluster = "group")
 
 # Robustness: fixed donor set (GB, NL, IE, LU)
 did_ch_donors_data_manual <- panel %>%
@@ -643,6 +779,7 @@ did_ch_donors_data_manual <- panel %>%
     post    = as.integer(quarter >= q_treat)
   ) %>%
   { if (!is.null(gdp_idx_tbl)) left_join(., gdp_idx_tbl, by = "quarter") else mutate(., gdp_idx = NA_real_) } %>%
+  { if (!is.null(gdp_growth_q)) left_join(., gdp_growth_q, by = c("id", "quarter")) else mutate(., gdp_growth = NA_real_) } %>%
   mutate(gdp_idx = if_else(id == "CH", gdp_idx, 0))
 
 did_ch_donors_group_manual <- did_ch_donors_data_manual %>%
@@ -651,23 +788,31 @@ did_ch_donors_group_manual <- did_ch_donors_data_manual %>%
   summarise(
     log_value = mean(log_value, na.rm = TRUE),
     gdp_idx   = mean(gdp_idx, na.rm = TRUE),
+    gdp_growth = mean(gdp_growth, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(group = factor(group, levels = c("Donor", "CH")))
 
 did_ch_donors_manual <- feols(
-  log_value ~ i(group, post, ref = "Donor") + gdp_idx | group + quarter,
+  log_value ~ i(group, post, ref = "Donor") + gdp_idx + gdp_growth | group + quarter,
   cluster = ~ group,
   data = did_ch_donors_group_manual
 )
 
 did_ch_donors_manual_tidy <- broom::tidy(did_ch_donors_manual) %>%
   filter(term == "group::CH:post")
+did_ch_donors_manual_boot <- wild_boot(did_ch_donors_manual, "group::CH:post", cluster = "group")
 
 write_csv(
   did_ch_donors_tidy,
   file.path(out_dir, "did_log_CH_vs_donors_results.csv")
 )
+if (!is.null(did_ch_donors_boot)) {
+  write_csv(
+    did_ch_donors_boot %>% mutate(model = "CH vs auto donors (log)"),
+    file.path(out_dir, "did_log_CH_vs_donors_wildboot.csv")
+  )
+}
 writeLines(
   capture.output(print(summary(did_ch_donors))),
   file.path(out_dir, "did_log_CH_vs_donors_console.txt")
@@ -676,6 +821,43 @@ write_csv(
   did_ch_donors_manual_tidy,
   file.path(out_dir, "did_log_CH_vs_manual_donors_results.csv")
 )
+if (!is.null(did_ch_donors_manual_boot)) {
+  write_csv(
+    did_ch_donors_manual_boot %>% mutate(model = "CH vs fixed donors (log)"),
+    file.path(out_dir, "did_log_CH_vs_manual_donors_wildboot.csv")
+  )
+}
+
+###########################
+# 5b. Illustration: CH vs donors with FX + VIX controls (pooled OLS, no FE)
+###########################
+if (!is.null(vix_q)) {
+  reg_fx_vix <- panel %>%
+    filter(id %in% c("CH", ids_donors_auto)) %>%
+    left_join(controls_q, by = "quarter") %>%
+    left_join(vix_q, by = "quarter") %>%
+    mutate(
+      CH = as.integer(id == "CH"),
+      treated = as.integer(quarter >= q_treat),
+      fx_ch = ex_ch,              # CHF/USD only
+      vix = coalesce(vix, 0)
+    )
+
+  reg_fx_vix_mod <- tryCatch(
+    feols(
+      value ~ treated + CH + fx_ch + vix + treated:CH,
+      cluster = ~ id,
+      data = reg_fx_vix
+    ),
+    error = function(e) NULL
+  )
+
+  if (!is.null(reg_fx_vix_mod)) {
+    writeLines(capture.output(summary(reg_fx_vix_mod)), file.path(out_dir, "reg_fx_vix_CH_vs_donors.txt"))
+    tidy_fx_vix <- broom::tidy(reg_fx_vix_mod)
+    write_csv(tidy_fx_vix, file.path(out_dir, "reg_fx_vix_CH_vs_donors.csv"))
+  }
+}
 
 key_coefs <- bind_rows(
   broom::tidy(did_triad) %>%
@@ -839,9 +1021,32 @@ ggsave(
 ###########################
 # 5. synthdid SCM
 ###########################
-panel_scm <- panel %>% filter(quarter >= as.yearqtr("2017 Q1"))
+panel_scm <- panel %>% filter(quarter >= as.yearqtr("2018 Q1"))
 
-donors_for_ch <- intersect(ids_donors_auto, unique(panel_scm$id))
+# Pre-fit screen: keep donors with lowest pre-2022 RMSPE vs CH
+ch_pre <- panel_scm %>%
+  filter(id == "CH", quarter < q_treat) %>%
+  select(quarter, log_ch = log_value)
+
+donor_fit <- panel_scm %>%
+  filter(id != "CH", quarter < q_treat) %>%
+  left_join(ch_pre, by = "quarter") %>%
+  group_by(id) %>%
+  summarise(
+    rmspe = sqrt(mean((log_ch - log_value)^2, na.rm = TRUE)),
+    n_q   = sum(!is.na(log_ch - log_value)),
+    .groups = "drop"
+  ) %>%
+  filter(n_q >= 6) %>%
+  arrange(rmspe)
+
+donor_fit_n <- nrow(donor_fit)
+donors_for_ch <- donor_fit %>%
+  slice_head(n = min(3, donor_fit_n)) %>%
+  pull(id)
+if (length(donors_for_ch) == 0) {
+  donors_for_ch <- intersect(ids_donors_auto, unique(panel_scm$id))
+}
 units_for_ch  <- c(donors_for_ch, "CH")  # donors first, CH last
 
 ch_mat <- panel_scm %>%
@@ -871,7 +1076,11 @@ if (nrow(Y) >= 2 && T0 >= 2) {
     error = function(e) { message("[warn] synthdid failed: ", e$message); NULL }
   )
   ch_tau <- tryCatch(as.numeric(ch_sd), error = function(e) { message("[warn] coef() failed: ", e$message); NA_real_ })
+  ch_se  <- tryCatch(as.numeric(synthdid_se(ch_sd, method = "jackknife")), error = function(e) { message("[warn] synthdid_se failed: ", e$message); NA_real_ })
+  if (length(ch_se) == 0) ch_se <- NA_real_
   if (length(ch_tau) == 0) ch_tau <- NA_real_
+  ch_tval <- if (!is.na(ch_tau) && !is.na(ch_se) && ch_se != 0) ch_tau / ch_se else NA_real_
+  ch_pval <- if (!is.na(ch_tval)) 2 * pnorm(-abs(ch_tval)) else NA_real_
   if (!is.na(ch_tau)) print(glue("synthdid ATT (post-mean log gap): {round(ch_tau, 4)}"))
 
   if (!is.null(ch_sd)) {
@@ -884,6 +1093,9 @@ if (nrow(Y) >= 2 && T0 >= 2) {
 } else {
   ch_sd <- NULL
   ch_tau <- NA_real_
+  ch_se  <- NA_real_
+  ch_tval <- NA_real_
+  ch_pval <- NA_real_
   message("[warn] synthdid skipped: insufficient donors or pre-period (nrow(Y)<2 or T0<2)")
 }
 
@@ -904,10 +1116,229 @@ placebo_df <- purrr::map_dfr(rownames(Y), function(u) {
     att  = tryCatch(as.numeric(est), error = function(e) NA_real_)
   )
 }) %>% drop_na(att)
+# If jackknife SE is NA, fall back to placebo dispersion
+if (is.na(ch_se) && nrow(placebo_df) > 0) {
+  ch_se <- sd(placebo_df$att, na.rm = TRUE)
+  ch_tval <- if (!is.na(ch_tau) && !is.na(ch_se) && ch_se != 0) ch_tau / ch_se else NA_real_
+  ch_pval <- if (!is.na(ch_tval)) 2 * pnorm(-abs(ch_tval)) else NA_real_
+}
 if (nrow(placebo_df) > 0) {
   write_csv(placebo_df, file.path(out_dir, "synthdid_placebo_att.csv"))
 } else {
   message("[warn] placebo_df empty; skipping placebo export/plot")
+}
+
+# Classic Synth (Abadie et al.) with targeted pre-trend matching
+synth_df <- panel_scm %>%
+  filter(id %in% units_for_ch) %>%
+  mutate(
+    unit_num = as.numeric(factor(id, levels = units_for_ch)),
+    time_num = as.numeric(factor(quarter, levels = sort(unique(quarter))))
+  )
+common_q <- synth_df %>%
+  count(quarter) %>%
+  filter(n == length(units_for_ch)) %>%
+  pull(quarter)
+synth_df <- synth_df %>% filter(quarter %in% common_q)
+
+pre_t  <- sort(unique(synth_df$time_num[synth_df$quarter < q_treat]))
+post_t <- sort(unique(synth_df$time_num[synth_df$quarter >= q_treat]))
+treat_num <- max(synth_df$unit_num)
+control_nums <- setdiff(unique(synth_df$unit_num), treat_num)
+
+dp <- Synth::dataprep(
+  foo = as.data.frame(synth_df),
+  predictors = "log_value",
+  predictors.op = "mean",
+  special.predictors = list(
+    list("log_value", tail(pre_t, 4), "mean"),   # last pre year
+    list("log_value", tail(pre_t, 8), "mean"),   # last two pre years
+    list("log_value", head(pre_t, 4), "mean")    # early pre period
+  ),
+  dependent = "log_value",
+  unit.variable = "unit_num",
+  time.variable = "time_num",
+  unit.names.variable = "id",
+  treatment.identifier = treat_num,
+  controls.identifier = control_nums,
+  time.optimize.ssr = pre_t,
+  time.predictors.prior = pre_t,
+  time.plot = c(pre_t, post_t)
+)
+
+sc_res <- tryCatch(Synth::synth(dp), error = function(e) { message("[warn] synth failed: ", e$message); NULL })
+
+if (!is.null(sc_res)) {
+  synth_series <- as.numeric(dp$Y0plot %*% sc_res$solution.w)
+  actual       <- as.numeric(dp$Y1plot)
+  time_vec     <- sort(unique(synth_df$quarter))
+
+  sc_gap <- tibble(
+    quarter = time_vec,
+    CH      = actual,
+    synth   = synth_series,
+    gap     = actual - synth_series
+  )
+  write_csv(sc_gap, file.path(out_dir, "synth_classic_paths_gap.csv"))
+
+  donor_nums <- if (is.null(names(sc_res$solution.w))) {
+    seq_along(sc_res$solution.w)
+  } else {
+    as.integer(names(sc_res$solution.w))
+  }
+  weights_tbl <- tibble(
+    donor_num = donor_nums,
+    weight    = as.numeric(sc_res$solution.w)
+  ) %>%
+    left_join(
+      tibble(donor_num = control_nums, donor = units_for_ch[control_nums]),
+      by = "donor_num"
+    )
+  write_csv(weights_tbl, file.path(out_dir, "synth_classic_weights.csv"))
+
+  pre_idx  <- which(time_vec < q_treat)
+  post_idx <- which(time_vec >= q_treat)
+  rmspe_pre  <- sqrt(mean((actual[pre_idx]  - synth_series[pre_idx])^2))
+  rmspe_post <- sqrt(mean((actual[post_idx] - synth_series[post_idx])^2))
+  write_csv(tibble(rmspe_pre, rmspe_post, rmspe_ratio = rmspe_post / rmspe_pre),
+            file.path(out_dir, "synth_classic_rmspe.csv"))
+
+  fig_classic <- sc_gap %>%
+    pivot_longer(c(CH, synth), names_to = "series", values_to = "log_value") %>%
+    ggplot(aes(x = as.Date(quarter), y = log_value, color = series)) +
+    geom_line(linewidth = 1) +
+    geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
+    labs(
+      title = "Classic Synth: CH vs synthetic donors (log liabilities)",
+      subtitle = glue("RMSPE post/pre = {round(rmspe_post / rmspe_pre, 2)}"),
+      x = NULL, y = "Log liabilities", color = NULL
+    ) +
+    theme_minimal(base_size = 12)
+  ggsave(file.path(fig_dir, "fig2f_synth_classic_paths.png"), fig_classic, width = 9, height = 5.2, dpi = 200)
+}
+
+# Augmented SCM (augsynth) with FX/GDP/VIX controls
+if (requireNamespace("augsynth", quietly = TRUE)) {
+  panel_aug <- panel %>%
+    filter(quarter >= as.yearqtr("2018 Q1")) %>%
+    left_join(controls_q, by = "quarter") %>%
+    { if (!is.null(gdp_growth_q)) left_join(., gdp_growth_q, by = c("id", "quarter")) else . } %>%
+    { if (!is.null(gdp_idx_tbl)) left_join(., gdp_idx_tbl, by = "quarter") else mutate(., gdp_idx = NA_real_) } %>%
+    filter(id %in% units_for_ch) %>%
+    mutate(
+      time_num = as.integer(factor(quarter, levels = sort(unique(quarter)))),
+      treated  = as.integer(id == "CH")
+    ) %>%
+    mutate(across(c(ex_ch, vix, gdp_idx, gdp_growth), ~ coalesce(., 0)))
+
+  t_int <- panel_aug %>%
+    distinct(time_num, quarter) %>%
+    filter(quarter == q_treat) %>%
+    pull(time_num) %>%
+    unique()
+
+  if (length(t_int) == 1) {
+    aug_mod <- tryCatch(
+      augsynth::augsynth(
+        log_value ~ ex_ch + vix + gdp_idx,
+        unit = id, time = time_num, t_int = t_int,
+        data = panel_aug %>% drop_na(log_value, time_num),
+        progfunc = "ridge", scm = TRUE
+      ),
+      error = function(e) { message("[warn] augsynth failed: ", e$message); NULL }
+    )
+
+    if (!is.null(aug_mod)) {
+      att_aug <- tryCatch(as.numeric(aug_mod$att), error = function(e) NA_real_)
+      se_aug  <- tryCatch(as.numeric(aug_mod$att.se), error = function(e) NA_real_)
+      p_aug   <- if (!is.na(att_aug) && !is.na(se_aug) && se_aug != 0) 2 * pnorm(-abs(att_aug / se_aug)) else NA_real_
+      write_csv(
+        tibble(att = att_aug, se = se_aug, p_value = p_aug),
+        file.path(out_dir, "augsynth_ATT.csv")
+      )
+      if (!is.null(aug_mod$weights$unit_weights)) {
+        wt_aug <- tibble(
+          donor = names(aug_mod$weights$unit_weights),
+          weight = as.numeric(aug_mod$weights$unit_weights)
+        )
+        write_csv(wt_aug, file.path(out_dir, "augsynth_weights.csv"))
+      }
+    }
+  } else {
+    message("[warn] augsynth skipped: treatment quarter not found in panel_aug")
+  }
+} else {
+  message("[info] augsynth not installed; skipping augmented SCM")
+}
+
+# Alternative SCM: restricted donors (NL, IE, LU), pre-period trimmed to 2018Q1–2021Q4
+panel_scm_alt <- panel %>%
+  filter(quarter >= as.yearqtr("2018 Q1"), quarter <= as.yearqtr("2025 Q2"))
+donors_alt <- intersect(c("NL", "IE", "LU"), unique(panel_scm_alt$id))
+units_alt  <- c(donors_alt, "CH")
+if (length(units_alt) >= 2) {
+  alt_mat <- panel_scm_alt %>%
+    filter(id %in% units_alt) %>%
+    select(id, quarter, log_value) %>%
+    pivot_wider(names_from = quarter, values_from = log_value) %>%
+    arrange(factor(id, levels = units_alt))
+  Y_alt <- as.matrix(alt_mat[, -1])
+  rownames(Y_alt) <- alt_mat$id
+  all_q_alt <- as.yearqtr(colnames(alt_mat)[-1])
+  complete_cols_alt <- colSums(!is.na(Y_alt)) == nrow(Y_alt)
+  Y_alt <- Y_alt[, complete_cols_alt, drop = FALSE]
+  all_q_alt <- all_q_alt[complete_cols_alt]
+  T0_alt <- sum(all_q_alt < q_treat)
+  N0_alt <- min(length(donors_alt), nrow(Y_alt) - 1)
+  if (nrow(Y_alt) >= 2 && T0_alt >= 2) {
+    alt_sd <- tryCatch(synthdid_estimate(Y_alt, N0 = N0_alt, T0 = T0_alt), error = function(e) NULL)
+    alt_tau <- tryCatch(as.numeric(alt_sd), error = function(e) NA_real_)
+    alt_se  <- tryCatch(as.numeric(synthdid_se(alt_sd, method = "jackknife")), error = function(e) NA_real_)
+    if (is.na(alt_se) || length(alt_se) == 0) alt_se <- sd(placebo_df$att, na.rm = TRUE)
+    alt_tval <- if (!is.na(alt_tau) && !is.na(alt_se) && alt_se != 0) alt_tau / alt_se else NA_real_
+    alt_pval <- if (!is.na(alt_tval)) 2 * pnorm(-abs(alt_tval)) else NA_real_
+  } else {
+    alt_tau <- NA_real_; alt_se <- NA_real_; alt_tval <- NA_real_; alt_pval <- NA_real_
+    message("[warn] alt SCM skipped: insufficient donors or pre-period")
+  }
+} else {
+  alt_tau <- NA_real_; alt_se <- NA_real_; alt_tval <- NA_real_; alt_pval <- NA_real_
+  message("[warn] alt SCM skipped: no donors available (NL, IE, LU missing)")
+}
+
+# Alternative SCM: level outcome, same donors, same window
+panel_scm_lvl <- panel %>% filter(quarter >= as.yearqtr("2018 Q1"))
+units_lvl <- units_for_ch
+lvl_mat <- panel_scm_lvl %>%
+  filter(id %in% units_lvl) %>%
+  select(id, quarter, value) %>%
+  pivot_wider(names_from = quarter, values_from = value) %>%
+  arrange(factor(id, levels = units_lvl))
+Y_lvl <- as.matrix(lvl_mat[, -1]); rownames(Y_lvl) <- lvl_mat$id
+q_lvl <- as.yearqtr(colnames(lvl_mat)[-1])
+keep_lvl <- colSums(!is.na(Y_lvl)) == nrow(Y_lvl)
+Y_lvl <- Y_lvl[, keep_lvl, drop = FALSE]; q_lvl <- q_lvl[keep_lvl]
+T0_lvl <- sum(q_lvl < q_treat); N0_lvl <- min(length(donors_for_ch), nrow(Y_lvl) - 1)
+if (nrow(Y_lvl) >= 2 && T0_lvl >= 2) {
+  lvl_sd <- tryCatch(synthdid_estimate(Y_lvl, N0 = N0_lvl, T0 = T0_lvl), error = function(e) NULL)
+  lvl_tau <- tryCatch(as.numeric(lvl_sd), error = function(e) NA_real_)
+  lvl_se  <- tryCatch(as.numeric(synthdid_se(lvl_sd, method = "jackknife")), error = function(e) NA_real_)
+  # fallback placebo-based SE for level outcome
+  placebo_level <- purrr::map_dfr(rownames(Y_lvl), function(u) {
+    donors_u <- setdiff(rownames(Y_lvl), u)
+    Y_rot <- rbind(Y_lvl[donors_u, , drop = FALSE], Y_lvl[u, , drop = FALSE])
+    N0_rot <- nrow(Y_rot) - 1
+    est <- tryCatch(synthdid_estimate(Y_rot, N0 = N0_rot, T0 = T0_lvl), error = function(e) NULL)
+    tibble(unit = u, att = tryCatch(as.numeric(est), error = function(e) NA_real_))
+  }) %>% drop_na(att)
+  if ((is.na(lvl_se) || length(lvl_se) == 0) && nrow(placebo_level) > 0) {
+    lvl_se <- sd(placebo_level$att, na.rm = TRUE)
+  }
+  lvl_tval <- if (!is.na(lvl_tau) && !is.na(lvl_se) && lvl_se != 0) lvl_tau / lvl_se else NA_real_
+  lvl_pval <- if (!is.na(lvl_tval)) 2 * pnorm(-abs(lvl_tval)) else NA_real_
+} else {
+  lvl_tau <- NA_real_; lvl_se <- NA_real_; lvl_tval <- NA_real_; lvl_pval <- NA_real_
+  message("[warn] level SCM skipped: insufficient donors or pre-period")
 }
 
 tau_ch   <- tryCatch(as.numeric(ch_sd), error = function(e) NA_real_)
@@ -961,6 +1392,11 @@ if (!is.null(omega) && length(donor_idx) > 0) {
   Y_synth <- as.numeric(drop(t(omega) %*% Y_don))
 }
 
+pre_idx  <- 1:T0
+post_idx <- (T0 + 1):ncol(Y)
+rmspe_pre_plot  <- sqrt(mean((Y_treat[pre_idx]  - Y_synth[pre_idx])^2, na.rm = TRUE))
+rmspe_post_plot <- sqrt(mean((Y_treat[post_idx] - Y_synth[post_idx])^2, na.rm = TRUE))
+
 gap_df <- tibble(
   quarter = all_q,
   CH      = Y_treat,
@@ -993,7 +1429,7 @@ if (nrow(gap_df) > 0) {
     geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
     labs(
       title = "Gap: CH minus synthetic (log)",
-      subtitle = "Negative values = CH below synthetic counterfactual",
+      subtitle = glue("Negative = CH below synthetic | RMSPE post/pre = {round(rmspe_post_plot / rmspe_pre_plot, 2)}"),
       x = NULL, y = "Log gap"
     ) +
     theme_minimal(base_size = 12)
@@ -1015,8 +1451,8 @@ if (exists("fig2_paths") && exists("fig2_gap") && exists("fig3") && !is.null(fig
 }
 pre_idx  <- 1:T0
 post_idx <- (T0 + 1):ncol(Y)
-rmspe_pre  <- sqrt(mean((Y_treat[pre_idx]  - Y_synth[pre_idx])^2, na.rm = TRUE))
-rmspe_post <- sqrt(mean((Y_treat[post_idx] - Y_synth[post_idx])^2, na.rm = TRUE))
+rmspe_pre  <- rmspe_pre_plot
+rmspe_post <- rmspe_post_plot
 write_csv(tibble(rmspe_pre, rmspe_post, rmspe_ratio = rmspe_post / rmspe_pre), file.path(out_dir, "synthdid_rmspe.csv"))
 
 donor_names <- setdiff(rownames(Y), "CH")
@@ -1053,6 +1489,7 @@ if (nrow(loo) > 0) {
 ###########################
 panel_es <- panel %>%
   left_join(controls_q, by = "quarter") %>%
+  { if (!is.null(gdp_growth_q)) left_join(., gdp_growth_q, by = c("id", "quarter")) else . } %>%
   mutate(
     treated = (id == "CH"),
     time_id = as.integer(factor(quarter, levels = sort(unique(quarter))))
@@ -1454,6 +1891,8 @@ main_results <- tibble::tibble(
     "Log liabilities DiD (CH vs auto donors, +GDP)",
     "Log liabilities DiD (CH vs fixed donors, +GDP)",
     "SCM ATT (log gap)",
+    "SCM ATT (log gap, restricted donors NL/IE/LU)",
+    "SCM ATT (level outcome)",
     "SCM perm p-value"
   ),
   estimate = c(
@@ -1461,20 +1900,26 @@ main_results <- tibble::tibble(
     if (nrow(did_ch_donors_tidy) > 0) did_ch_donors_tidy$estimate[1] else NA_real_,
     if (nrow(did_ch_donors_manual_tidy) > 0) did_ch_donors_manual_tidy$estimate[1] else NA_real_,
     if (!is.null(ch_tau)) ch_tau else NA_real_,
+    if (!is.null(alt_tau)) alt_tau else NA_real_,
+    if (!is.null(lvl_tau)) lvl_tau else NA_real_,
     if (!is.null(perm_p)) perm_p else NA_real_
   ),
   std_error = c(
     if (nrow(did_triad_tidy) > 0) did_triad_tidy$std.error[1] else NA_real_,
     if (nrow(did_ch_donors_tidy) > 0) did_ch_donors_tidy$std.error[1] else NA_real_,
     if (nrow(did_ch_donors_manual_tidy) > 0) did_ch_donors_manual_tidy$std.error[1] else NA_real_,
-    NA_real_,
+    if (!is.null(ch_se)) ch_se else NA_real_,
+    if (!is.null(alt_se)) alt_se else NA_real_,
+    if (!is.null(lvl_se)) lvl_se else NA_real_,
     NA_real_
   ),
   p_value = c(
     if (nrow(did_triad_tidy) > 0) did_triad_tidy$p.value[1] else NA_real_,
     if (nrow(did_ch_donors_tidy) > 0) did_ch_donors_tidy$p.value[1] else NA_real_,
     if (nrow(did_ch_donors_manual_tidy) > 0) did_ch_donors_manual_tidy$p.value[1] else NA_real_,
-    NA_real_,
+    if (!is.null(ch_pval)) ch_pval else NA_real_,
+    if (!is.null(alt_pval)) alt_pval else NA_real_,
+    if (!is.null(lvl_pval)) lvl_pval else NA_real_,
     if (!is.null(perm_p)) perm_p else NA_real_
   )
 ) %>%
@@ -1492,6 +1937,8 @@ main_results <- tibble::tibble(
       "CH vs auto donors, log liabilities, +GDP",
       "CH vs fixed donors, log liabilities, +GDP",
       "SCM post-mean log gap",
+      "SCM post-mean log gap (NL/IE/LU donors, 2018Q1+)",
+      "SCM post-mean level gap (CH vs donors)",
       "Permutation p-value (SCM)"
     )[seq_len(n())]
   )
@@ -1554,13 +2001,13 @@ writeLines(html_doc, file.path(out_dir, "main_results_table.html"))
 did_ch_donors_nocntl <- feols(
   log_value ~ i(group, post, ref = "Donor") | group + quarter,
   cluster = ~ group,
-  data = did_ch_donors_group %>% select(-gdp_idx)
+  data = did_ch_donors_group %>% select(-gdp_idx, -gdp_growth)
 )
 did_ch_donors_nocntl_tidy <- broom::tidy(did_ch_donors_nocntl) %>%
   filter(term == "group::CH:post") %>%
   mutate(model = "No GDP control")
 did_ch_donors_withcntl_tidy <- did_ch_donors_tidy %>%
-  mutate(model = "With GDP control")
+  mutate(model = "With GDP controls (gdp_idx, gdp_growth)")
 controls_compare <- bind_rows(did_ch_donors_nocntl_tidy, did_ch_donors_withcntl_tidy) %>%
   mutate(
     ci_low = estimate - 1.96 * std.error,
@@ -1568,6 +2015,22 @@ controls_compare <- bind_rows(did_ch_donors_nocntl_tidy, did_ch_donors_withcntl_
   ) %>%
   select(model, estimate, std.error, p.value, ci_low, ci_high)
 write_csv(controls_compare, file.path(out_dir, "did_log_CH_donors_controls_compare.csv"))
+
+# Aggregate wild bootstrap results (if any)
+boot_list <- list(
+  triad = did_triad_boot,
+  auto  = did_ch_donors_boot,
+  fixed = did_ch_donors_manual_boot
+) %>% purrr::discard(is.null)
+if (length(boot_list) > 0) {
+  labs <- c(
+    triad = "Triad share CH vs HK+SG",
+    auto  = "CH vs auto donors (log)",
+    fixed = "CH vs fixed donors (log)"
+  )
+  boot_df <- purrr::imap_dfr(boot_list, ~ mutate(.x, model = labs[.y]))
+  write_csv(boot_df, file.path(out_dir, "wild_bootstrap_results.csv"))
+}
 
 controls_html_rows <- paste0(
   "<tr><td>", controls_compare$model, "</td>",
@@ -1586,6 +2049,123 @@ controls_html <- c(
 )
 writeLines(controls_html, file.path(out_dir, "did_log_CH_donors_controls_compare.html"))
 
+# ------------------------------------------------------------------
+# Additional visuals/diagnostics
+# ------------------------------------------------------------------
+# 1) SCM cumulative gap and time/donor weights
+if (exists("gap_df")) {
+  gap_df <- gap_df %>%
+    mutate(cum_gap = cumsum(replace_na(gap, 0)))
+  fig_gap_cum <- gap_df %>%
+    ggplot(aes(x = as.Date(quarter), y = cum_gap)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_line(color = "firebrick", linewidth = 1) +
+    geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
+    labs(title = "Cumulative gap: CH - synthetic (log)", x = NULL, y = "Cumulative log gap") +
+    theme_minimal(base_size = 12)
+  ggsave(file.path(fig_dir, "fig2e_synthdid_cum_gap_CH.png"), fig_gap_cum, width = 9, height = 4.5, dpi = 200)
+}
+
+if (!is.null(lambda)) {
+  lambda_vec <- as.numeric(lambda)
+  lambda_q <- all_q[seq_len(min(length(lambda_vec), length(all_q)))]
+  tw_df <- tibble(quarter = lambda_q, weight = lambda_vec[seq_along(lambda_q)])
+  fig_time_weights <- tw_df %>%
+    ggplot(aes(x = as.Date(quarter), y = weight)) +
+    geom_col(fill = "gray60") +
+    labs(title = "SCM time weights", x = NULL, y = "Weight") +
+    theme_minimal(base_size = 11)
+  ggsave(file.path(fig_dir, "fig_synthdid_time_weights.png"), fig_time_weights, width = 8, height = 4, dpi = 200)
+}
+
+# 2) DiD forest including FX+VIX pooled model (if available)
+did_fx_vix <- NULL
+if (file_exists(file.path(out_dir, "reg_fx_vix_CH_vs_donors.csv"))) {
+  did_fx_vix <- read_csv(file.path(out_dir, "reg_fx_vix_CH_vs_donors.csv"), show_col_types = FALSE) %>%
+    filter(term == "treated:CH") %>%
+    transmute(model = "Pooled OLS + FX + VIX (CH vs donors)", estimate, std.error)
+}
+
+forest_df <- bind_rows(
+  did_ch_donors_tidy %>% transmute(model = "DiD log (auto donors, +GDP)", estimate, std.error),
+  did_ch_donors_manual_tidy %>% transmute(model = "DiD log (fixed donors, +GDP)", estimate, std.error),
+  did_fx_vix
+) %>% drop_na(estimate)
+
+if (nrow(forest_df) > 0) {
+  fig_forest <- forest_df %>%
+    ggplot(aes(y = model, x = estimate)) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    geom_point() +
+    geom_errorbarh(aes(xmin = estimate - 1.96 * std.error, xmax = estimate + 1.96 * std.error), height = 0.2) +
+    labs(title = "CH vs donors: DiD estimates across specs", x = "Estimate", y = NULL) +
+    theme_minimal(base_size = 12)
+  ggsave(file.path(fig_dir, "fig_did_forest_CH_vs_donors.png"), fig_forest, width = 8, height = 4.5, dpi = 200)
+}
+
+# 3) HK+SG ES with ribbon (conf.int)
+es_hksg_tidy_ci <- broom::tidy(es_hksg, conf.int = TRUE) %>%
+  filter(str_detect(term, "^time_id::")) %>%
+  mutate(
+    time_id    = suppressWarnings(as.integer(str_extract(term, "[0-9]+"))),
+    event_time = time_id - ref_time_hksg
+  ) %>% drop_na(time_id)
+
+fig_HKSG_ci <- es_hksg_tidy_ci %>%
+  ggplot(aes(x = event_time, y = estimate)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.15, fill = "steelblue") +
+  geom_line(color = "steelblue") +
+  geom_point(color = "steelblue") +
+  labs(
+    title = "HK+SG vs donor centres (event-study, share)",
+    x = "Event time (quarters)",
+    y = "Change in share of global liabilities"
+  ) +
+  theme_minimal(base_size = 12)
+ggsave(file.path(fig_dir, "fig_event_HKSG_share_ribbon.png"), fig_HKSG_ci, width = 8.5, height = 5.2, dpi = 200)
+
+# 4) Control correlation heatmap (log outcome + controls)
+ctrl_df <- panel %>%
+  left_join(controls_q, by = "quarter") %>%
+  left_join(gdp_idx_tbl, by = "quarter") %>%
+  left_join(vix_q, by = "quarter") %>%
+  select(log_value, ex_ch, ex_hk, ex_sg, ex_lu, ex_sa, gdp_idx, vix)
+if (nrow(ctrl_df) > 0) {
+  cor_mat <- cor(ctrl_df, use = "pairwise.complete.obs")
+  cor_df <- as.data.frame(as.table(cor_mat))
+  names(cor_df) <- c("var1", "var2", "corr")
+  fig_cor <- cor_df %>%
+    ggplot(aes(x = var1, y = var2, fill = corr)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "firebrick", mid = "white", high = "steelblue", limits = c(-1, 1)) +
+    labs(title = "Correlation: outcomes and controls", x = NULL, y = NULL, fill = "rho") +
+    theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  ggsave(file.path(fig_dir, "fig_cor_controls.png"), fig_cor, width = 7, height = 6, dpi = 200)
+}
+
+# 5) Pre/post means by group (CH, HK+SG, Donors)
+prepost_tbl <- panel %>%
+  mutate(group = case_when(id == "CH" ~ "CH", id %in% c("HK", "SG") ~ "HK+SG", id %in% ids_donors_auto ~ "Donor", TRUE ~ NA_character_)) %>%
+  filter(!is.na(group)) %>%
+  mutate(post = quarter >= q_treat) %>%
+  group_by(group, post) %>%
+  summarise(
+    mean_log = mean(log_value, na.rm = TRUE),
+    sd_log   = sd(log_value, na.rm = TRUE),
+    mean_lvl = mean(value, na.rm = TRUE),
+    .groups = "drop"
+  )
+write_csv(prepost_tbl, file.path(out_dir, "prepost_means_by_group.csv"))
+
+prepost_plot <- prepost_tbl %>%
+  mutate(period = if_else(post, "Post", "Pre")) %>%
+  ggplot(aes(x = group, y = mean_log, fill = period)) +
+  geom_col(position = position_dodge(width = 0.7)) +
+  labs(title = "Pre/Post mean log liabilities", y = "Mean log(value)", x = NULL, fill = NULL) +
+  theme_minimal(base_size = 12)
+ggsave(file.path(fig_dir, "fig_prepost_means_log.png"), prepost_plot, width = 7, height = 4.5, dpi = 200)
 # -------------------------
 # INTERPRETIVE NOTES (comments only)
 # -------------------------
