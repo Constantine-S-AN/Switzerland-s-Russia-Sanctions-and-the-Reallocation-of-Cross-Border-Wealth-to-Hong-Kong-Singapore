@@ -69,7 +69,7 @@ gdp_paths <- list(
 )
 
 ids_main   <- c("CH")
-ids_donors <- c("GB", "NL", "IE", "ES", "FI", "BE", "SE", "NO", "DK", "IT")  # HK/SG excluded by design
+ids_donors <- c("GB", "NL", "IE", "ES", "FI", "BE", "SE", "NO", "IT")  # DK dropped; HK/SG excluded by design
 
 q_start <- as.yearqtr("2015 Q1")
 q_end   <- as.yearqtr("2025 Q2")
