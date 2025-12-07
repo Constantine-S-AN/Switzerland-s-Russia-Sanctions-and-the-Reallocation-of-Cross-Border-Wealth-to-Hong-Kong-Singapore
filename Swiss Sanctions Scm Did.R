@@ -458,7 +458,7 @@ if (!is.null(gdp_growth_q)) {
     filter(quarter >= q_start, quarter <= q_end)
   write_csv(gdp_growth_q, file.path(out_dir, "gdp_growth_quarterly_all.csv"))
 
-  # Plot GDP growth (quarterly step) for available centers
+  # Plot GDP growth (quarterly step) for all analysis centers (CH/HK/SG + donors)
   gdp_ids <- intersect(
     unique(gdp_growth_q$id),
     c("CH", "HK", "SG", "GB", "NL", "IE", "ES", "FI", "BE", "SE", "NO", "DK", "IT")
@@ -472,6 +472,7 @@ if (!is.null(gdp_growth_q)) {
       ungroup()
 
     fig_gdp_growth <- gdp_growth_plot %>%
+      filter(quarter >= as.yearqtr("2017 Q4")) %>%
       ggplot(aes(x = as.Date(quarter), color = id)) +
       geom_line(aes(y = growth_ma4), linewidth = 1) +
       geom_point(aes(y = growth_ma4), size = 1.5, alpha = 0.7) +
