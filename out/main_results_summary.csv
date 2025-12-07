@@ -1,8 +1,5 @@
-model,estimate,std_error,p_value,t_value,sig,note
-Triad share DiD (CH vs HK+SG),-0.025085772239421444,0.007687113837862404,0.08245397387493478,-3.2633538111355946,.,"CH share vs HK+SG (triad, pct-pt)"
-"Log liabilities DiD (CH vs auto donors, +GDP)",-0.010543033021850551,1e-6,6.038298174150493e-5,-10543.033021850551,***,"CH vs auto donors, log liabilities, +GDP"
-"Log liabilities DiD (CH vs fixed donors, +GDP)",-0.010543033021850551,1e-6,6.038298174150493e-5,-10543.033021850551,***,"CH vs fixed donors, log liabilities, +GDP"
-SCM ATT (log gap),-0.07251548157499586,0.0948750262996651,0.44467279267797444,-0.764326339641308,,SCM post-mean log gap
-"SCM ATT (log gap, restricted donors NL/IE/LU)",-0.1727428639805626,0.0948750262996651,0.06864621463458291,-1.820741144618501,.,"SCM post-mean log gap (NL/IE/LU donors, 2018Q1+)"
-SCM ATT (level outcome),-33050.39075590482,77229.01260530308,0.6686853097029344,-0.42795304045665533,,SCM post-mean level gap (CH vs donors)
-SCM perm p-value,0.6666666666666666,NA,0.6666666666666666,NA,,Permutation p-value (SCM)
+model,estimate,std_error,p_value
+Triad share DiD (CH vs HK+SG),-0.025085772239421444,0.007687113837862404,0.08245397387493478
+Triad share ES (Sun-Abraham),NA,NA,NA
+synthdid ATT (log gap),-0.11851057066742905,NA,NA
+Classic Synth gap (mean post),-0.20163401675825277,NA,NA
