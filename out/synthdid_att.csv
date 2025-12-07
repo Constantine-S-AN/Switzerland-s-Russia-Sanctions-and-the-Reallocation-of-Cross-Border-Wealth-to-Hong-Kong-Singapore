@@ -1,2 +1,2 @@
-att,se,p_value,p_value_placebo,p_value_placebo_one_sided,se_method
--0.27086024095909284,0.1276721185030536,0.033877218590180155,0.2,0.1,placebo
+att,se,p_value
+-0.11851057066742905,NA,NA

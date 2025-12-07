@@ -495,7 +495,7 @@ if (!is.null(gdp_growth_q)) {
 # 4. Figure: levels/index
 ###########################
 fig1 <- panel_indexed %>%
-  filter(id %in% ids_main) %>%
+  filter(id %in% c("CH", "HK", "SG")) %>%
   ggplot(aes(x = as.Date(quarter), y = index, color = id)) +
   geom_line(linewidth = 1) +
   geom_vline(xintercept = as.Date(q_treat), linetype = "dashed") +
