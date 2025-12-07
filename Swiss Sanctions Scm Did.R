@@ -459,7 +459,10 @@ if (!is.null(gdp_growth_q)) {
   write_csv(gdp_growth_q, file.path(out_dir, "gdp_growth_quarterly_all.csv"))
 
   # Plot GDP growth (quarterly step) for available centers
-  gdp_ids <- intersect(unique(gdp_growth_q$id), unique(panel$id))
+  gdp_ids <- intersect(
+    unique(gdp_growth_q$id),
+    c("CH", "HK", "SG", "GB", "NL", "IE", "ES", "FI", "BE", "SE", "NO", "DK", "IT")
+  )
   if (length(gdp_ids) > 0) {
     gdp_growth_plot <- gdp_growth_q %>%
       filter(id %in% gdp_ids) %>%
