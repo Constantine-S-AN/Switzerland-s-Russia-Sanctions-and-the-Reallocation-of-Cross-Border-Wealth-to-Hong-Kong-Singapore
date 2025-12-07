@@ -24,15 +24,18 @@ This repo asks whether Switzerland’s adoption of EU Russia sanctions around **
 From the repo root:
 
 ```bash
-# R: main pipeline (SCM + DiD/ES + figures/tables)
+# SCM-only (current runs, donor tweaks)
+R_LIBS_USER="$(pwd)/r_libs" R_LIBS="$(pwd)/r_libs" Rscript Swiss_Sanctions_SCM.R
+
+# Full pipeline (SCM + DiD/ES + figures/tables)
 R_LIBS_USER="$(pwd)/r_libs" R_LIBS="$(pwd)/r_libs" Rscript "Swiss Sanctions Scm Did.R"
 
 # Optional: Python robustness checks (extra DiD/ES, plots, tables)
 python analysis_py.py
 ````
 
-* The R script will install any missing packages into `./r_libs` on the first run.
-* Main R outputs go to **`fig/`** (PNGs) and **`out/`** (CSVs/HTML/TeX).
+* The R scripts will use `./r_libs` if present; otherwise CRAN is used.
+* Main R outputs go to **`fig/`** (PNGs) and **`out/`** (CSVs).
 * Python robustness outputs go to **`fig_py/`** and **`out_py/`**.
 * Tested on **R 4.5.x** and a recent Python 3.x.
 
@@ -140,63 +143,14 @@ Core variables in the panel datasets:
 
 ---
 
-## Outputs (high level)
+## Outputs (current SCM run)
 
-The list below summarizes the most important outputs. File names may be useful for mapping to specific slides or tables.
+The latest SCM-only run (donors: GB, NL, IE, ES, FI, BE, SE, NO, IT; DK excluded) writes:
 
-### 1. SCM (CH vs donors)
+- Figures: `fig/fig_synthdid_paths_CH.png`, `fig/fig_synthdid_gap_CH.png`, `fig/fig_synth_classic_paths.png`, `fig/fig_synth_classic_gap.png`
+- Tables: `out/synthdid_att.csv` (ATT/SE/p), `out/synthdid_paths_gap.csv`, `out/synthdid_donor_weights.csv`, `out/synthdid_placebo_atts.csv`, `out/synth_classic_paths_gap.csv`, `out/synth_classic_weights.csv`, `out/panel_quarterly_CH_and_donors.csv`, `out/prepost_means_triad.csv`
 
-* `fig/fig2_synthdid_paths_CH.png` — treated vs synthetic CH liabilities over time
-* `fig/fig2c_synthdid_gap_CH.png` — gap (CH − synthetic) over time
-* `fig/fig3_placebo_ATT.png` — distribution of placebo ATTs across donor centres
-* `fig/fig3b_synthdid_leave_one_out.png` — leave-one-out SCM robustness
-* Weights and paths:
-
-  * `out/synthdid_donor_weights.csv`
-  * `out/synthdid_time_weights.csv`
-  * `out/synthdid_paths_gap.csv`
-
-### 2. Triad DiD / ES (CH vs HK+SG)
-
-* `fig/fig_triad_share_CH_vs_HKSG.png` — descriptive CH vs HK+SG triad share plot
-* `fig/fig_es_triad_CH_vs_HKSG.png` — simple event-study
-* `fig/fig_es_triad_CH_vs_HKSG_CI.png` — Sun–Abraham ES with 95% CIs
-* `out/did_triad_share_results.csv` — DiD estimates (including ATT on `treated × post`)
-
-### 3. CH vs donors DiD (log outcomes, +GDP)
-
-* `fig/fig_did_coefficients.png` — coefficient plots for CH vs donors (log liabilities)
-* `out/did_log_CH_vs_donors_results.csv` — “automatic” donor set
-* `out/did_log_CH_vs_manual_donors_results.csv` — fixed/manual donor set
-* `fig/fig_did_placebo_timing_CH.png` — placebo-timing check (2019Q4 “fake” treatment)
-
-### 4. Event-study plots
-
-* `fig/fig6_event_study_CH.png` — CH ES with full controls
-* `fig/fig6b_event_study_CH_donors_only.png` — CH ES with donors only
-* `fig/fig_event_HKSG_share.png` — HK+SG vs donors ES
-* `fig/fig_event_SA_vs_donors.png` — Saudi Arabia vs donors ES
-* `out/pretrend_tests.csv` — numeric pre-trend tests; p-values are also annotated in the plots
-
-### 5. GDP overlay
-
-* `fig/fig_gdp_liab_CH.png` — CH liabilities vs CH GDP index
-* `out/gdp_liab_summary_CH.csv` — summary statistics for the overlay
-
-### 6. Tables / panels
-
-* `out/main_results_table.html` / `.tex` — main regression summary table
-* `out/did_log_CH_donors_controls_compare.html` / `.csv` — DiD with vs without controls
-* `out/panel_quarterly_CH_HK_SG_and_donors.csv` — main panel used in regressions
-* `out/panel_quarterly_indexed.csv` — indexed version (2019Q4=100)
-
-Python robustness scripts may produce additional outputs in `fig_py/` and `out_py/` with similar naming conventions.
-
----
-
-## Headline findings (current run)
-
-The numbers below summarize the results at the current commit. Using different BIS vintages or alternative donor sets may shift magnitudes slightly.
+Earlier DiD/event-study artifacts may not be present in this snapshot; regenerate via `Swiss Sanctions Scm Did.R` or `analysis_py.py` if needed.
 
 * **SCM (CH vs donors)**
   Post-2022Q2 **log ATT ≈ −7%** (CH below synthetic). Permutation p-value ≈ 0.5, so suggestive but not statistically decisive.
